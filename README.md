@@ -5,7 +5,7 @@ A WhatsApp Web automation tool built with Tkinter, SQLite, Selenium, Pandas, and
 ## Fitur
 
 - Manajemen kontak (CRUD + import CSV).
-- Manajemen template pesan dengan placeholder `{{nama}}`, `{{nomor}}`, dan `{{tanggal}}`.
+- Manajemen template pesan dengan syntax template Jinja2 (`{{contact.nama}}`,`{{contact.nomor}}`, `{{today|format_date("%d/%m/%Y")}}`, kondisi, dll).
 - Blast manual dengan pemilihan kontak dan delay antar pesan.
 - Scheduler (set, auto start, cancel, riwayat).
 - Log status per kontak.
@@ -57,4 +57,23 @@ Scheduler memakai APScheduler. Saat aplikasi berjalan, semua jadwal berstatus `s
 
 - Penggunaan WhatsApp Web secara otomatis memiliki risiko pemblokiran nomor bila spam berlebihan.
 - Gunakan delay >= 2 detik dan batasi maksimal 300 pesan per hari sesuai rekomendasi SRS.
+- Lihat panduan lengkap pada `USER_MANUAL.md` atau tab **User Manual** di aplikasi.
+
+## Sintaks Template
+
+Template pesan dirender menggunakan Jinja2. Nilai yang selalu tersedia:
+
+- `contact`: informasi kontak dengan alias `contact.name`, `contact.nama`, `contact.number`, `contact.nomor`.
+- `today`: tanggal hari ini (`datetime.date`), gunakan `|format_date("%d/%m/%Y")` untuk format khusus.
+- `now`: timestamp saat pesan dikirim.
+
+Contoh isi template:
+
+```
+Halo {{ contact.nama }},
+Pesanan Anda akan kami kirim {{ today|format_date("%d %B %Y") }}.
+{% if contact.nomor.startswith('+62') %}
+Terima kasih pelanggan Indonesia!
+{% endif %}
+```
 "# whatsapp-blast" 

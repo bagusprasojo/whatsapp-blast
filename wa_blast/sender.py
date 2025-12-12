@@ -19,7 +19,7 @@ from selenium.webdriver.support.ui import WebDriverWait
 from . import config
 from .database import Database
 from .models import CampaignSettings, Contact, Template
-from .utils import render_template
+from .utils import build_template_context, render_template
 
 StatusCallback = Callable[[str], None]
 
@@ -107,11 +107,11 @@ class MessageController:
             if self._stop_requested:
                 self._emit(callback, "Kampanye dihentikan oleh pengguna")
                 break
-            personalized = render_template(
-                template.body,
-                {"name": contact.name, "number": contact.number},
-            )
             try:
+                personalized = render_template(
+                    template.body,
+                    build_template_context(contact=contact),
+                )
                 self.sender.send_message(contact.number, personalized)
                 status = f"Berhasil ({idx}) -> {contact.name}"
                 self.db.add_log(contact.number, "sent", status)

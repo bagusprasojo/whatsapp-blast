@@ -7,13 +7,15 @@ from __future__ import annotations
 import threading
 import tkinter as tk
 from datetime import datetime
+from pathlib import Path
 from tkinter import filedialog, messagebox, scrolledtext, ttk
-from typing import List, Optional
+from typing import Dict, List, Optional
 
 from .database import Database
 from .models import CampaignSettings, Contact, Template
 from .scheduler_service import SchedulerService
 from .sender import MessageController, WhatsAppSender
+from .utils import build_template_context, render_template
 
 
 class BlastApp(tk.Tk):
@@ -29,6 +31,8 @@ class BlastApp(tk.Tk):
         self.scheduler_service = SchedulerService(self.db, self.controller)
 
         self._blast_thread: Optional[threading.Thread] = None
+        self._preview_contact_map: Dict[str, Contact] = {}
+        self._manual_path = Path(__file__).resolve().parent.parent / "USER_MANUAL.md"
 
         self._build_ui()
         self._load_contacts()
@@ -48,18 +52,24 @@ class BlastApp(tk.Tk):
         self.tab_blast = ttk.Frame(notebook)
         self.tab_scheduler = ttk.Frame(notebook)
         self.tab_logs = ttk.Frame(notebook)
+        self.tab_manual = ttk.Frame(notebook)
+        self.tab_about = ttk.Frame(notebook)
 
         notebook.add(self.tab_contacts, text="Kontak")
         notebook.add(self.tab_templates, text="Template")
         notebook.add(self.tab_blast, text="Blast")
         notebook.add(self.tab_scheduler, text="Scheduler")
         notebook.add(self.tab_logs, text="Log")
+        notebook.add(self.tab_manual, text="User Manual")
+        notebook.add(self.tab_about, text="About")
 
         self._build_contacts_tab()
         self._build_templates_tab()
         self._build_blast_tab()
         self._build_scheduler_tab()
         self._build_logs_tab()
+        self._build_manual_tab()
+        self._build_about_tab()
 
     def _build_contacts_tab(self) -> None:
         frame = self.tab_contacts
@@ -106,6 +116,7 @@ class BlastApp(tk.Tk):
         ttk.Button(btn_frame, text="Tambah", command=self._add_template).pack(side=tk.LEFT, padx=5)
         ttk.Button(btn_frame, text="Update", command=self._update_template).pack(side=tk.LEFT, padx=5)
         ttk.Button(btn_frame, text="Hapus", command=self._delete_template).pack(side=tk.LEFT, padx=5)
+        ttk.Button(btn_frame, text="Preview", command=self._preview_template).pack(side=tk.LEFT, padx=5)
 
         self.tree_templates = ttk.Treeview(frame, columns=("title", "body"), show="headings")
         self.tree_templates.heading("title", text="Judul")
@@ -113,6 +124,18 @@ class BlastApp(tk.Tk):
         self.tree_templates.column("body", width=400)
         self.tree_templates.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
         self.tree_templates.bind("<<TreeviewSelect>>", self._on_template_select)
+
+        preview_frame = ttk.LabelFrame(frame, text="Preview Template")
+        preview_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=(0, 10))
+        preview_controls = ttk.Frame(preview_frame)
+        preview_controls.pack(fill=tk.X, padx=5, pady=5)
+        ttk.Label(preview_controls, text="Kontak contoh").pack(side=tk.LEFT)
+        self.combo_preview_contact = ttk.Combobox(preview_controls, state="readonly", width=40)
+        self.combo_preview_contact.pack(side=tk.LEFT, padx=5)
+        ttk.Button(preview_controls, text="Render Preview", command=self._preview_template).pack(side=tk.LEFT)
+
+        self.text_template_preview = scrolledtext.ScrolledText(preview_frame, height=8, state=tk.DISABLED)
+        self.text_template_preview.pack(fill=tk.BOTH, padx=5, pady=(0, 5))
 
     def _build_blast_tab(self) -> None:
         frame = self.tab_blast
@@ -186,10 +209,24 @@ class BlastApp(tk.Tk):
     def _load_contacts(self) -> None:
         self.tree_contacts.delete(*self.tree_contacts.get_children())
         self.tree_blast_contacts.delete(*self.tree_blast_contacts.get_children())
-        for contact in self.db.list_contacts():
+        contacts = self.db.list_contacts()
+        preview_labels = []
+        self._preview_contact_map.clear()
+        for contact in contacts:
             values = (contact.name, contact.number)
             self.tree_contacts.insert("", tk.END, iid=str(contact.id), values=values)
             self.tree_blast_contacts.insert("", tk.END, iid=f"blast-{contact.id}", values=values)
+            label = f"{contact.name} ({contact.number})"
+            preview_labels.append(label)
+            self._preview_contact_map[label] = contact
+        if hasattr(self, "combo_preview_contact"):
+            self.combo_preview_contact["values"] = preview_labels
+            if preview_labels:
+                current = self.combo_preview_contact.get()
+                if current not in preview_labels:
+                    self.combo_preview_contact.set(preview_labels[0])
+            else:
+                self.combo_preview_contact.set("")
 
     def _on_contact_select(self, _) -> None:
         selected = self.tree_contacts.selection()
@@ -305,6 +342,64 @@ class BlastApp(tk.Tk):
             self.db.delete_template(int(iid))
         self._load_templates()
 
+    def _preview_template(self) -> None:
+        body = self.text_template_body.get("1.0", tk.END).strip()
+        if not body:
+            messagebox.showinfo("Info", "Isi template kosong")
+            return
+        contact = self._get_preview_contact()
+        context = build_template_context(contact=contact)
+        try:
+            rendered = render_template(body, context)
+        except ValueError as exc:
+            rendered = f"Error saat render: {exc}"
+        self._set_preview_text(rendered)
+
+    def _get_preview_contact(self) -> Contact:
+        selected = getattr(self, "combo_preview_contact", None)
+        label = selected.get() if selected else ""
+        if label and label in self._preview_contact_map:
+            return self._preview_contact_map[label]
+        if self._preview_contact_map:
+            return next(iter(self._preview_contact_map.values()))
+        return Contact(id=None, name="Contoh", number="+620000000")
+
+    def _set_preview_text(self, content: str) -> None:
+        self.text_template_preview.configure(state=tk.NORMAL)
+        self.text_template_preview.delete("1.0", tk.END)
+        self.text_template_preview.insert("1.0", content)
+        self.text_template_preview.configure(state=tk.DISABLED)
+
+    # endregion
+
+    # region Manual / About
+    def _build_manual_tab(self) -> None:
+        frame = self.tab_manual
+        ttk.Button(frame, text="Refresh Manual", command=self._load_user_manual).pack(anchor=tk.E, padx=10, pady=5)
+        self.text_manual = scrolledtext.ScrolledText(frame, state=tk.DISABLED)
+        self.text_manual.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
+        self._load_user_manual()
+
+    def _build_about_tab(self) -> None:
+        frame = self.tab_about
+        about_text = (
+            "WhatsApp Blast Desktop\n\n"
+            "- Otomasi WhatsApp Web berbasis Selenium\n"
+            "- Manajemen kontak, template Jinja2, scheduler, dan logging\n"
+            # "- Sesuai spesifikasi SRS (lihat SRS.docx)\n"
+            # "- Build EXE menggunakan PyInstaller\n"
+        )
+        label = tk.Label(frame, text=about_text, justify=tk.LEFT, anchor="nw")
+        label.pack(fill=tk.BOTH, expand=True, padx=20, pady=20)
+
+    def _load_user_manual(self) -> None:
+        content = "User manual tidak ditemukan."
+        if self._manual_path.exists():
+            content = self._manual_path.read_text(encoding="utf-8")
+        self.text_manual.configure(state=tk.NORMAL)
+        self.text_manual.delete("1.0", tk.END)
+        self.text_manual.insert("1.0", content)
+        self.text_manual.configure(state=tk.DISABLED)
     # endregion
 
     # region Blast logic
@@ -407,7 +502,6 @@ class BlastApp(tk.Tk):
         self.scheduler_service.scheduler.shutdown(wait=False)
         self.sender.close()
         self.destroy()
-
 
 def run_app() -> None:
     app = BlastApp()
