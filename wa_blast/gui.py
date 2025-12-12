@@ -1,0 +1,418 @@
+"""
+Tkinter desktop interface for the WhatsApp Blast application.
+"""
+
+from __future__ import annotations
+
+import threading
+import tkinter as tk
+from datetime import datetime
+from tkinter import filedialog, messagebox, scrolledtext, ttk
+from typing import List, Optional
+
+from .database import Database
+from .models import CampaignSettings, Contact, Template
+from .scheduler_service import SchedulerService
+from .sender import MessageController, WhatsAppSender
+
+
+class BlastApp(tk.Tk):
+    def __init__(self) -> None:
+        super().__init__()
+        self.title("WhatsApp Blast Desktop")
+        self.geometry("1000x700")
+        self.resizable(True, True)
+
+        self.db = Database()
+        self.sender = WhatsAppSender()
+        self.controller = MessageController(self.db, self.sender)
+        self.scheduler_service = SchedulerService(self.db, self.controller)
+
+        self._blast_thread: Optional[threading.Thread] = None
+
+        self._build_ui()
+        self._load_contacts()
+        self._load_templates()
+        self._load_logs()
+        self._load_schedules()
+
+        self.protocol("WM_DELETE_WINDOW", self._on_close)
+
+    # region UI construction
+    def _build_ui(self) -> None:
+        notebook = ttk.Notebook(self)
+        notebook.pack(fill=tk.BOTH, expand=True)
+
+        self.tab_contacts = ttk.Frame(notebook)
+        self.tab_templates = ttk.Frame(notebook)
+        self.tab_blast = ttk.Frame(notebook)
+        self.tab_scheduler = ttk.Frame(notebook)
+        self.tab_logs = ttk.Frame(notebook)
+
+        notebook.add(self.tab_contacts, text="Kontak")
+        notebook.add(self.tab_templates, text="Template")
+        notebook.add(self.tab_blast, text="Blast")
+        notebook.add(self.tab_scheduler, text="Scheduler")
+        notebook.add(self.tab_logs, text="Log")
+
+        self._build_contacts_tab()
+        self._build_templates_tab()
+        self._build_blast_tab()
+        self._build_scheduler_tab()
+        self._build_logs_tab()
+
+    def _build_contacts_tab(self) -> None:
+        frame = self.tab_contacts
+        form = ttk.LabelFrame(frame, text="Form Kontak")
+        form.pack(fill=tk.X, padx=10, pady=10)
+
+        ttk.Label(form, text="Nama").grid(row=0, column=0, sticky=tk.W, padx=5, pady=5)
+        ttk.Label(form, text="Nomor").grid(row=1, column=0, sticky=tk.W, padx=5, pady=5)
+
+        self.entry_contact_name = ttk.Entry(form, width=40)
+        self.entry_contact_number = ttk.Entry(form, width=40)
+        self.entry_contact_name.grid(row=0, column=1, padx=5, pady=5)
+        self.entry_contact_number.grid(row=1, column=1, padx=5, pady=5)
+
+        btn_frame = ttk.Frame(form)
+        btn_frame.grid(row=2, column=0, columnspan=2, pady=10)
+
+        ttk.Button(btn_frame, text="Tambah", command=self._add_contact).pack(side=tk.LEFT, padx=5)
+        ttk.Button(btn_frame, text="Update", command=self._update_contact).pack(side=tk.LEFT, padx=5)
+        ttk.Button(btn_frame, text="Hapus", command=self._delete_contact).pack(side=tk.LEFT, padx=5)
+        ttk.Button(btn_frame, text="Import CSV", command=self._import_contacts).pack(side=tk.LEFT, padx=5)
+
+        self.tree_contacts = ttk.Treeview(frame, columns=("name", "number"), show="headings", selectmode="extended")
+        self.tree_contacts.heading("name", text="Nama")
+        self.tree_contacts.heading("number", text="Nomor")
+        self.tree_contacts.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
+        self.tree_contacts.bind("<<TreeviewSelect>>", self._on_contact_select)
+
+    def _build_templates_tab(self) -> None:
+        frame = self.tab_templates
+        form = ttk.LabelFrame(frame, text="Template")
+        form.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
+
+        ttk.Label(form, text="Judul").grid(row=0, column=0, sticky=tk.W, padx=5, pady=5)
+        self.entry_template_title = ttk.Entry(form, width=50)
+        self.entry_template_title.grid(row=0, column=1, padx=5, pady=5, sticky=tk.W)
+
+        ttk.Label(form, text="Isi").grid(row=1, column=0, sticky=tk.NW, padx=5, pady=5)
+        self.text_template_body = tk.Text(form, width=60, height=10)
+        self.text_template_body.grid(row=1, column=1, padx=5, pady=5, sticky=tk.W)
+
+        btn_frame = ttk.Frame(form)
+        btn_frame.grid(row=2, column=0, columnspan=2, pady=10)
+        ttk.Button(btn_frame, text="Tambah", command=self._add_template).pack(side=tk.LEFT, padx=5)
+        ttk.Button(btn_frame, text="Update", command=self._update_template).pack(side=tk.LEFT, padx=5)
+        ttk.Button(btn_frame, text="Hapus", command=self._delete_template).pack(side=tk.LEFT, padx=5)
+
+        self.tree_templates = ttk.Treeview(frame, columns=("title", "body"), show="headings")
+        self.tree_templates.heading("title", text="Judul")
+        self.tree_templates.heading("body", text="Isi")
+        self.tree_templates.column("body", width=400)
+        self.tree_templates.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
+        self.tree_templates.bind("<<TreeviewSelect>>", self._on_template_select)
+
+    def _build_blast_tab(self) -> None:
+        frame = self.tab_blast
+        controls = ttk.LabelFrame(frame, text="Pengaturan Blast")
+        controls.pack(fill=tk.X, padx=10, pady=10)
+
+        ttk.Label(controls, text="Template").grid(row=0, column=0, sticky=tk.W, padx=5, pady=5)
+        self.combo_blast_template = ttk.Combobox(controls, state="readonly")
+        self.combo_blast_template.grid(row=0, column=1, padx=5, pady=5)
+
+        ttk.Label(controls, text="Delay (detik)").grid(row=1, column=0, sticky=tk.W, padx=5, pady=5)
+        self.spin_delay = ttk.Spinbox(controls, from_=1, to=60, width=5)
+        self.spin_delay.set("2")
+        self.spin_delay.grid(row=1, column=1, padx=5, pady=5, sticky=tk.W)
+
+        btn_frame = ttk.Frame(controls)
+        btn_frame.grid(row=2, column=0, columnspan=2, pady=10)
+        ttk.Button(btn_frame, text="Mulai Blast", command=self._start_blast).pack(side=tk.LEFT, padx=5)
+        ttk.Button(btn_frame, text="Stop", command=self._stop_blast).pack(side=tk.LEFT, padx=5)
+
+        ttk.Label(frame, text="Pilih Kontak (gunakan Ctrl/Cmd untuk multi-select)").pack(anchor=tk.W, padx=10)
+        self.tree_blast_contacts = ttk.Treeview(frame, columns=("name", "number"), show="headings", selectmode="extended")
+        self.tree_blast_contacts.heading("name", text="Nama")
+        self.tree_blast_contacts.heading("number", text="Nomor")
+        self.tree_blast_contacts.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
+
+        self.text_blast_status = scrolledtext.ScrolledText(frame, height=8, state=tk.DISABLED)
+        self.text_blast_status.pack(fill=tk.BOTH, padx=10, pady=10)
+
+    def _build_scheduler_tab(self) -> None:
+        frame = self.tab_scheduler
+        form = ttk.LabelFrame(frame, text="Penjadwalan")
+        form.pack(fill=tk.X, padx=10, pady=10)
+
+        ttk.Label(form, text="Tanggal & Jam (YYYY-MM-DD HH:MM)").grid(row=0, column=0, sticky=tk.W, padx=5, pady=5)
+        self.entry_schedule_time = ttk.Entry(form, width=25)
+        self.entry_schedule_time.grid(row=0, column=1, padx=5, pady=5)
+
+        ttk.Label(form, text="Template").grid(row=1, column=0, sticky=tk.W, padx=5, pady=5)
+        self.combo_schedule_template = ttk.Combobox(form, state="readonly")
+        self.combo_schedule_template.grid(row=1, column=1, padx=5, pady=5, sticky=tk.W)
+
+        ttk.Label(form, text="Delay (detik)").grid(row=2, column=0, sticky=tk.W, padx=5, pady=5)
+        self.spin_schedule_delay = ttk.Spinbox(form, from_=1, to=60, width=5)
+        self.spin_schedule_delay.set("2")
+        self.spin_schedule_delay.grid(row=2, column=1, sticky=tk.W, padx=5, pady=5)
+
+        btn_frame = ttk.Frame(form)
+        btn_frame.grid(row=3, column=0, columnspan=2, pady=10)
+        ttk.Button(btn_frame, text="Tambah Jadwal", command=self._add_schedule).pack(side=tk.LEFT, padx=5)
+        ttk.Button(btn_frame, text="Cancel Jadwal", command=self._cancel_schedule).pack(side=tk.LEFT, padx=5)
+
+        self.tree_schedules = ttk.Treeview(frame, columns=("time", "template", "status"), show="headings")
+        self.tree_schedules.heading("time", text="Waktu")
+        self.tree_schedules.heading("template", text="Template")
+        self.tree_schedules.heading("status", text="Status")
+        self.tree_schedules.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
+
+    def _build_logs_tab(self) -> None:
+        frame = self.tab_logs
+        ttk.Button(frame, text="Refresh Log", command=self._load_logs).pack(anchor=tk.E, padx=10, pady=5)
+        columns = ("timestamp", "number", "status", "message")
+        self.tree_logs = ttk.Treeview(frame, columns=columns, show="headings")
+        for col in columns:
+            self.tree_logs.heading(col, text=col.capitalize())
+        self.tree_logs.column("message", width=400)
+        self.tree_logs.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
+    # endregion
+
+    # region Contacts logic
+    def _load_contacts(self) -> None:
+        self.tree_contacts.delete(*self.tree_contacts.get_children())
+        self.tree_blast_contacts.delete(*self.tree_blast_contacts.get_children())
+        for contact in self.db.list_contacts():
+            values = (contact.name, contact.number)
+            self.tree_contacts.insert("", tk.END, iid=str(contact.id), values=values)
+            self.tree_blast_contacts.insert("", tk.END, iid=f"blast-{contact.id}", values=values)
+
+    def _on_contact_select(self, _) -> None:
+        selected = self.tree_contacts.selection()
+        if not selected:
+            return
+        iid = selected[0]
+        values = self.tree_contacts.item(iid, "values")
+        self.entry_contact_name.delete(0, tk.END)
+        self.entry_contact_name.insert(0, values[0])
+        self.entry_contact_number.delete(0, tk.END)
+        self.entry_contact_number.insert(0, values[1])
+
+    def _add_contact(self) -> None:
+        name = self.entry_contact_name.get().strip()
+        number = self.entry_contact_number.get().strip()
+        if not name or not number:
+            messagebox.showwarning("Validasi", "Nama dan nomor wajib diisi")
+            return
+        self.db.add_contact(name, number)
+        self._load_contacts()
+
+    def _update_contact(self) -> None:
+        selected = self.tree_contacts.selection()
+        if not selected:
+            messagebox.showinfo("Info", "Pilih kontak untuk diupdate")
+            return
+        name = self.entry_contact_name.get().strip()
+        number = self.entry_contact_number.get().strip()
+        if not name or not number:
+            messagebox.showwarning("Validasi", "Nama dan nomor wajib diisi")
+            return
+        contact_id = int(selected[0])
+        self.db.update_contact(contact_id, name, number)
+        self._load_contacts()
+
+    def _delete_contact(self) -> None:
+        selected = self.tree_contacts.selection()
+        if not selected:
+            return
+        if not messagebox.askyesno("Konfirmasi", "Hapus kontak terpilih?"):
+            return
+        for iid in selected:
+            self.db.delete_contact(int(iid))
+        self._load_contacts()
+
+    def _import_contacts(self) -> None:
+        csv_path = filedialog.askopenfilename(filetypes=[("CSV", "*.csv")])
+        if not csv_path:
+            return
+        try:
+            inserted = self.db.import_contacts_from_csv(csv_path)
+            messagebox.showinfo("Import selesai", f"{inserted} kontak diproses")
+            self._load_contacts()
+        except Exception as exc:  # noqa: BLE001
+            messagebox.showerror("Error", str(exc))
+    # endregion
+
+    # region Templates logic
+    def _load_templates(self) -> None:
+        self.tree_templates.delete(*self.tree_templates.get_children())
+        templates = self.db.list_templates()
+        for template in templates:
+            self.tree_templates.insert(
+                "",
+                tk.END,
+                iid=str(template.id),
+                values=(template.title, template.body[:80] + "..."),
+            )
+        titles = [t.title for t in templates]
+        self.combo_blast_template["values"] = titles
+        self.combo_schedule_template["values"] = titles
+
+    def _on_template_select(self, _) -> None:
+        selected = self.tree_templates.selection()
+        if not selected:
+            return
+        template_id = int(selected[0])
+        template = next((t for t in self.db.list_templates() if t.id == template_id), None)
+        if not template:
+            return
+        self.entry_template_title.delete(0, tk.END)
+        self.entry_template_title.insert(0, template.title)
+        self.text_template_body.delete("1.0", tk.END)
+        self.text_template_body.insert("1.0", template.body)
+
+    def _add_template(self) -> None:
+        title = self.entry_template_title.get().strip()
+        body = self.text_template_body.get("1.0", tk.END).strip()
+        if not title or not body:
+            messagebox.showwarning("Validasi", "Judul dan isi wajib diisi")
+            return
+        self.db.add_template(title, body)
+        self._load_templates()
+
+    def _update_template(self) -> None:
+        selected = self.tree_templates.selection()
+        if not selected:
+            messagebox.showinfo("Info", "Pilih template yang akan diperbarui")
+            return
+        template_id = int(selected[0])
+        title = self.entry_template_title.get().strip()
+        body = self.text_template_body.get("1.0", tk.END).strip()
+        self.db.update_template(template_id, title, body)
+        self._load_templates()
+
+    def _delete_template(self) -> None:
+        selected = self.tree_templates.selection()
+        if not selected:
+            return
+        if not messagebox.askyesno("Konfirmasi", "Hapus template terpilih?"):
+            return
+        for iid in selected:
+            self.db.delete_template(int(iid))
+        self._load_templates()
+
+    # endregion
+
+    # region Blast logic
+    def _append_status(self, message: str) -> None:
+        self.text_blast_status.configure(state=tk.NORMAL)
+        self.text_blast_status.insert(tk.END, message + "\n")
+        self.text_blast_status.configure(state=tk.DISABLED)
+        self.text_blast_status.see(tk.END)
+
+    def _get_selected_contacts(self) -> List[Contact]:
+        selected = self.tree_blast_contacts.selection()
+        ids = [int(iid.split("-")[1]) for iid in selected] if selected else [c.id for c in self.db.list_contacts()]
+        contacts = [c for c in self.db.list_contacts() if c.id in ids]
+        return contacts
+
+    def _start_blast(self) -> None:
+        template_title = self.combo_blast_template.get()
+        if not template_title:
+            messagebox.showwarning("Validasi", "Pilih template terlebih dahulu")
+            return
+        template = next((t for t in self.db.list_templates() if t.title == template_title), None)
+        if not template:
+            messagebox.showerror("Error", "Template tidak ditemukan")
+            return
+        contacts = self._get_selected_contacts()
+        if not contacts:
+            messagebox.showwarning("Validasi", "Tidak ada kontak terpilih")
+            return
+        delay_seconds = int(self.spin_delay.get())
+        settings = CampaignSettings(delay_seconds=delay_seconds, template_id=template.id)
+        if self._blast_thread and self._blast_thread.is_alive():
+            messagebox.showinfo("Info", "Blast sedang berlangsung")
+            return
+        self._blast_thread = threading.Thread(
+            target=self.controller.run_campaign,
+            args=(contacts, template, settings, self._append_status),
+            daemon=True,
+        )
+        self._blast_thread.start()
+
+    def _stop_blast(self) -> None:
+        self.controller.stop()
+        self._append_status("Permintaan stop dikirim")
+    # endregion
+
+    # region Scheduler logic
+    def _load_schedules(self) -> None:
+        self.tree_schedules.delete(*self.tree_schedules.get_children())
+        templates = {t.id: t.title for t in self.db.list_templates()}
+        for schedule in self.db.list_schedules():
+            self.tree_schedules.insert(
+                "",
+                tk.END,
+                iid=str(schedule.id),
+                values=(
+                    schedule.start_time.strftime("%Y-%m-%d %H:%M"),
+                    templates.get(schedule.template_id, "N/A"),
+                    schedule.status,
+                ),
+            )
+
+    def _add_schedule(self) -> None:
+        start_text = self.entry_schedule_time.get().strip()
+        try:
+            run_time = datetime.strptime(start_text, "%Y-%m-%d %H:%M")
+        except ValueError:
+            messagebox.showerror("Error", "Format tanggal salah")
+            return
+        template_title = self.combo_schedule_template.get()
+        template = next((t for t in self.db.list_templates() if t.title == template_title), None)
+        if not template:
+            messagebox.showerror("Error", "Template tidak ditemukan")
+            return
+        delay = int(self.spin_schedule_delay.get())
+        schedule_id = self.scheduler_service.schedule_campaign(run_time, template.id, delay)
+        messagebox.showinfo("Sukses", f"Jadwal #{schedule_id} ditambahkan")
+        self._load_schedules()
+
+    def _cancel_schedule(self) -> None:
+        selected = self.tree_schedules.selection()
+        if not selected:
+            return
+        schedule_id = int(selected[0])
+        self.scheduler_service.cancel_schedule(schedule_id)
+        self._load_schedules()
+    # endregion
+
+    # region Logs
+    def _load_logs(self) -> None:
+        self.tree_logs.delete(*self.tree_logs.get_children())
+        for log in self.db.list_logs():
+            self.tree_logs.insert(
+                "",
+                tk.END,
+                values=(log.timestamp.strftime("%Y-%m-%d %H:%M:%S"), log.number, log.status, log.message),
+            )
+    # endregion
+
+    def _on_close(self) -> None:
+        self.scheduler_service.scheduler.shutdown(wait=False)
+        self.sender.close()
+        self.destroy()
+
+
+def run_app() -> None:
+    app = BlastApp()
+    app.mainloop()
+
+
+if __name__ == "__main__":
+    run_app()

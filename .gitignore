@@ -1,0 +1,27 @@
+# Bytecode / cache
+__pycache__/
+*.py[cod]
+*.pyo
+
+# Virtual environments
+env/
+venv/
+.venv/
+ENV/
+env.bak/
+
+# Packaging / build output
+build/
+dist/
+*.egg-info/
+pip-wheel-metadata/
+
+# IDE settings
+.idea/
+.vscode/
+
+# Local data artifacts
+data/wa_blast.db
+
+# Logs
+*.log
