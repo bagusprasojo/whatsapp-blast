@@ -8,7 +8,7 @@ import sqlite3
 from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
-from typing import Iterable, List, Sequence
+from typing import Dict, Iterable, List, Sequence
 
 import pandas as pd
 
@@ -185,12 +185,14 @@ class Database:
                 (normalize_number(number), status, message, datetime.utcnow().isoformat()),
             )
 
-    def list_logs(self, limit: int = 200) -> List[LogEntry]:
+    def list_logs(self, limit: int | None = 200) -> List[LogEntry]:
         with self._connection() as conn:
-            rows = conn.execute(
-                "SELECT id, number, status, message, timestamp FROM logs ORDER BY id DESC LIMIT ?",
-                (limit,),
-            ).fetchall()
+            query = "SELECT id, number, status, message, timestamp FROM logs ORDER BY id DESC"
+            params: List[int] = []
+            if limit is not None:
+                query += " LIMIT ?"
+                params.append(limit)
+            rows = conn.execute(query, tuple(params)).fetchall()
         return [
             LogEntry(
                 id=row["id"],
@@ -201,6 +203,22 @@ class Database:
             )
             for row in rows
         ]
+
+    def logs_dataframe(self) -> pd.DataFrame:
+        with self._connection() as conn:
+            df = pd.read_sql_query(
+                "SELECT id, number, status, message, timestamp FROM logs ORDER BY id DESC",
+                conn,
+                parse_dates=["timestamp"],
+            )
+        return df
+
+    def log_status_counts(self) -> Dict[str, int]:
+        with self._connection() as conn:
+            rows = conn.execute(
+                "SELECT status, COUNT(*) as total FROM logs GROUP BY status"
+            ).fetchall()
+        return {row["status"]: row["total"] for row in rows}
 
 
 def normalize_number(number: str) -> str:

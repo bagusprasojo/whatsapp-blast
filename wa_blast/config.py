@@ -19,5 +19,11 @@ DEFAULT_BROWSER = "chrome"
 # APScheduler configuration
 SCHEDULER_JOBSTORE = DATA_DIR / "jobs.sqlite"
 
+# Authentication
+AUTH_ENDPOINT = (
+    "https://script.google.com/macros/s/"
+    "AKfycbww0PkO5E3wQ8w62_UvU3IABbvwW4PqDP4BNIXMY-H5dYAmB7a81b6OuOE0RB0RMIgFjw/exec"
+)
+
 DATA_DIR.mkdir(exist_ok=True)
 SELENIUM_DRIVER_PATH.mkdir(parents=True, exist_ok=True)

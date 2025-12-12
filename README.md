@@ -8,7 +8,8 @@ A WhatsApp Web automation tool built with Tkinter, SQLite, Selenium, Pandas, and
 - Manajemen template pesan dengan syntax template Jinja2 (`{{contact.nama}}`,`{{contact.nomor}}`, `{{today|format_date("%d/%m/%Y")}}`, kondisi, dll).
 - Blast manual dengan pemilihan kontak dan delay antar pesan.
 - Scheduler (set, auto start, cancel, riwayat).
-- Log status per kontak.
+- Log status per kontak dengan ekspor CSV/PDF dan grafik ringkasan sukses/gagal.
+- Proteksi login: pengguna tanpa login hanya melihat kontak terbatas, login memberi akses penuh.
 
 ## Persiapan
 
@@ -27,6 +28,12 @@ python main.py
 ```
 
 Pada run pertama, login ke WhatsApp Web di jendela Selenium. Setelah QR code dipindai, sesi disimpan di profil browser default.
+
+### Login Aplikasi
+
+- Gunakan tombol **Login** pada tab Blast untuk memasukkan email/password yang terdaftar (diverifikasi via Google Apps Script).
+- Jika belum login, tab Blast hanya menampilkan kontak pertama sebagai contoh sehingga blast bersifat terbatas.
+- Setelah login sukses, status di tab Blast menampilkan nama & masa berlaku lisensi dan seluruh kontak siap dipilih.
 
 ## Build ke EXE
 

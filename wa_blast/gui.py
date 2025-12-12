@@ -9,8 +9,12 @@ import tkinter as tk
 from datetime import datetime
 from pathlib import Path
 from tkinter import filedialog, messagebox, scrolledtext, ttk
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
 
+from fpdf import FPDF
+
+from . import config
+from .auth import AuthClient, AuthError
 from .database import Database
 from .models import CampaignSettings, Contact, Template
 from .scheduler_service import SchedulerService
@@ -33,6 +37,8 @@ class BlastApp(tk.Tk):
         self._blast_thread: Optional[threading.Thread] = None
         self._preview_contact_map: Dict[str, Contact] = {}
         self._manual_path = Path(__file__).resolve().parent.parent / "USER_MANUAL.md"
+        self.auth_client = AuthClient(config.AUTH_ENDPOINT)
+        self.auth_profile: Optional[Dict[str, Any]] = None
 
         self._build_ui()
         self._load_contacts()
@@ -156,6 +162,15 @@ class BlastApp(tk.Tk):
         ttk.Button(btn_frame, text="Mulai Blast", command=self._start_blast).pack(side=tk.LEFT, padx=5)
         ttk.Button(btn_frame, text="Stop", command=self._stop_blast).pack(side=tk.LEFT, padx=5)
 
+        status_frame = ttk.Frame(controls)
+        status_frame.grid(row=3, column=0, columnspan=2, sticky=tk.W, padx=5)
+        self.login_status_var = tk.StringVar(value="Status: Belum login")
+        ttk.Label(status_frame, textvariable=self.login_status_var).pack(side=tk.LEFT)
+        self.btn_login = ttk.Button(status_frame, text="Login", command=self._open_login_dialog)
+        self.btn_login.pack(side=tk.LEFT, padx=5)
+        self.btn_logout = ttk.Button(status_frame, text="Logout", command=self._logout, state=tk.DISABLED)
+        self.btn_logout.pack(side=tk.LEFT, padx=5)
+
         ttk.Label(frame, text="Pilih Kontak (gunakan Ctrl/Cmd untuk multi-select)").pack(anchor=tk.W, padx=10)
         self.tree_blast_contacts = ttk.Treeview(frame, columns=("name", "number"), show="headings", selectmode="extended")
         self.tree_blast_contacts.heading("name", text="Nama")
@@ -164,6 +179,7 @@ class BlastApp(tk.Tk):
 
         self.text_blast_status = scrolledtext.ScrolledText(frame, height=8, state=tk.DISABLED)
         self.text_blast_status.pack(fill=tk.BOTH, padx=10, pady=10)
+        self._update_login_ui()
 
     def _build_scheduler_tab(self) -> None:
         frame = self.tab_scheduler
@@ -196,13 +212,23 @@ class BlastApp(tk.Tk):
 
     def _build_logs_tab(self) -> None:
         frame = self.tab_logs
-        ttk.Button(frame, text="Refresh Log", command=self._load_logs).pack(anchor=tk.E, padx=10, pady=5)
+        controls = ttk.Frame(frame)
+        controls.pack(fill=tk.X, padx=10, pady=5)
+        ttk.Button(controls, text="Refresh Log", command=self._load_logs).pack(side=tk.LEFT, padx=5)
+        ttk.Button(controls, text="Export CSV", command=self._export_logs_csv).pack(side=tk.LEFT, padx=5)
+        ttk.Button(controls, text="Export PDF", command=self._export_logs_pdf).pack(side=tk.LEFT, padx=5)
+
         columns = ("timestamp", "number", "status", "message")
         self.tree_logs = ttk.Treeview(frame, columns=columns, show="headings")
         for col in columns:
             self.tree_logs.heading(col, text=col.capitalize())
         self.tree_logs.column("message", width=400)
         self.tree_logs.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
+
+        chart_frame = ttk.LabelFrame(frame, text="Ringkasan Status")
+        chart_frame.pack(fill=tk.X, padx=10, pady=(0, 10))
+        self.canvas_log_chart = tk.Canvas(chart_frame, height=140)
+        self.canvas_log_chart.pack(fill=tk.X, expand=True, padx=10, pady=10)
     # endregion
 
     # region Contacts logic
@@ -215,10 +241,13 @@ class BlastApp(tk.Tk):
         for contact in contacts:
             values = (contact.name, contact.number)
             self.tree_contacts.insert("", tk.END, iid=str(contact.id), values=values)
-            self.tree_blast_contacts.insert("", tk.END, iid=f"blast-{contact.id}", values=values)
             label = f"{contact.name} ({contact.number})"
             preview_labels.append(label)
             self._preview_contact_map[label] = contact
+        blast_contacts = contacts if self.auth_profile else contacts[:1]
+        for contact in blast_contacts:
+            values = (contact.name, contact.number)
+            self.tree_blast_contacts.insert("", tk.END, iid=f"blast-{contact.id}", values=values)
         if hasattr(self, "combo_preview_contact"):
             self.combo_preview_contact["values"] = preview_labels
             if preview_labels:
@@ -386,8 +415,8 @@ class BlastApp(tk.Tk):
             "WhatsApp Blast Desktop\n\n"
             "- Otomasi WhatsApp Web berbasis Selenium\n"
             "- Manajemen kontak, template Jinja2, scheduler, dan logging\n"
-            # "- Sesuai spesifikasi SRS (lihat SRS.docx)\n"
-            # "- Build EXE menggunakan PyInstaller\n"
+            "- Ekspor log ke CSV/PDF + grafik ringkasan\n"
+            "- Dapat dibuild ke EXE menggunakan PyInstaller\n"
         )
         label = tk.Label(frame, text=about_text, justify=tk.LEFT, anchor="nw")
         label.pack(fill=tk.BOTH, expand=True, padx=20, pady=20)
@@ -402,6 +431,80 @@ class BlastApp(tk.Tk):
         self.text_manual.configure(state=tk.DISABLED)
     # endregion
 
+    def _open_login_dialog(self) -> None:
+        if self.auth_profile:
+            messagebox.showinfo("Login", "Anda sudah login")
+            return
+        dialog = tk.Toplevel(self)
+        dialog.title("Login Pengguna")
+        dialog.geometry("320x180")
+        dialog.transient(self)
+        dialog.grab_set()
+
+        ttk.Label(dialog, text="Email").pack(anchor=tk.W, padx=10, pady=(15, 5))
+        entry_email = ttk.Entry(dialog, width=30)
+        entry_email.pack(padx=10)
+
+        ttk.Label(dialog, text="Password").pack(anchor=tk.W, padx=10, pady=(10, 5))
+        entry_password = ttk.Entry(dialog, width=30, show="*")
+        entry_password.pack(padx=10)
+
+        def submit() -> None:
+            email = entry_email.get().strip()
+            password = entry_password.get().strip()
+            if not email or not password:
+                messagebox.showwarning("Login", "Email dan password wajib diisi")
+                return
+            self._attempt_login(email, password, dialog)
+
+        ttk.Button(dialog, text="Login", command=submit).pack(pady=15)
+        entry_email.focus_set()
+
+    def _attempt_login(self, email: str, password: str, dialog: tk.Toplevel) -> None:
+        try:
+            profile = self.auth_client.login(email, password)
+        except AuthError as exc:
+            messagebox.showerror("Login gagal", str(exc))
+            return
+        self.auth_profile = profile
+        self._update_login_ui()
+        self._load_contacts()
+        messagebox.showinfo("Login", f"Selamat datang {profile.get('nama', email)}")
+        dialog.destroy()
+
+    def _logout(self) -> None:
+        if not self.auth_profile:
+            return
+        self.auth_profile = None
+        self._update_login_ui()
+        self._load_contacts()
+        messagebox.showinfo("Logout", "Anda telah logout")
+
+    def _update_login_ui(self) -> None:
+        status_text = "Status: Belum login"
+        if self.auth_profile:
+            name = self.auth_profile.get("nama") or self.auth_profile.get("email", "")
+            exp = self._format_expiry_text(self.auth_profile.get("tgl_expired"))
+            exp_text = f" - Exp: {exp}" if exp else ""
+            status_text = f"Status: Login sebagai {name}{exp_text}"
+            self.btn_login.configure(state=tk.DISABLED)
+            self.btn_logout.configure(state=tk.NORMAL)
+        else:
+            self.btn_login.configure(state=tk.NORMAL)
+            self.btn_logout.configure(state=tk.DISABLED)
+        self.login_status_var.set(status_text)
+
+    @staticmethod
+    def _format_expiry_text(raw: Optional[str]) -> str:
+        if not raw:
+            return ""
+        cleaned = raw.replace("Z", "+00:00")
+        try:
+            parsed = datetime.fromisoformat(cleaned)
+            return parsed.strftime("%Y-%m-%d")
+        except ValueError:
+            return raw
+
     # region Blast logic
     def _append_status(self, message: str) -> None:
         self.text_blast_status.configure(state=tk.NORMAL)
@@ -411,9 +514,12 @@ class BlastApp(tk.Tk):
 
     def _get_selected_contacts(self) -> List[Contact]:
         selected = self.tree_blast_contacts.selection()
-        ids = [int(iid.split("-")[1]) for iid in selected] if selected else [c.id for c in self.db.list_contacts()]
-        contacts = [c for c in self.db.list_contacts() if c.id in ids]
-        return contacts
+        all_contacts = self.db.list_contacts()
+        allowed_contacts = all_contacts if self.auth_profile else all_contacts[:1]
+        if selected:
+            selected_ids = {int(iid.split("-")[1]) for iid in selected}
+            return [c for c in allowed_contacts if c.id in selected_ids]
+        return allowed_contacts
 
     def _start_blast(self) -> None:
         template_title = self.combo_blast_template.get()
@@ -496,6 +602,121 @@ class BlastApp(tk.Tk):
                 tk.END,
                 values=(log.timestamp.strftime("%Y-%m-%d %H:%M:%S"), log.number, log.status, log.message),
             )
+        self._update_log_chart()
+
+    def _export_logs_csv(self) -> None:
+        df = self.db.logs_dataframe()
+        if df.empty:
+            messagebox.showinfo("Export CSV", "Belum ada log untuk diekspor")
+            return
+        path = filedialog.asksaveasfilename(
+            defaultextension=".csv",
+            filetypes=[("CSV", "*.csv")],
+            title="Simpan log ke CSV",
+        )
+        if not path:
+            return
+        df.to_csv(path, index=False)
+        messagebox.showinfo("Export CSV", f"Log berhasil disimpan ke {path}")
+
+    def _export_logs_pdf(self) -> None:
+        df = self.db.logs_dataframe()
+        if df.empty:
+            messagebox.showinfo("Export PDF", "Belum ada log untuk diekspor")
+            return
+        path = filedialog.asksaveasfilename(
+            defaultextension=".pdf",
+            filetypes=[("PDF", "*.pdf")],
+            title="Simpan log ke PDF",
+        )
+        if not path:
+            return
+        try:
+            pdf = FPDF()
+            pdf.set_auto_page_break(auto=True, margin=15)
+            pdf.add_page()
+            pdf.set_font("Helvetica", "B", 14)
+            pdf.cell(0, 10, "WhatsApp Blast Log Report", ln=1)
+            pdf.set_font("Helvetica", "", 10)
+            pdf.cell(0, 8, f"Dibuat: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}", ln=1)
+
+            counts = self.db.log_status_counts()
+            pdf.set_font("Helvetica", "B", 11)
+            pdf.cell(0, 8, "Ringkasan Status", ln=1)
+            pdf.set_font("Helvetica", "", 10)
+            if counts:
+                for status, value in counts.items():
+                    pdf.cell(0, 6, f"{status}: {value}", ln=1)
+            else:
+                pdf.cell(0, 6, "Tidak ada data", ln=1)
+            pdf.ln(4)
+
+            headers = ["Timestamp", "Nomor", "Status", "Pesan"]
+            widths = [40, 35, 25, 90]
+            line_height = 6
+            pdf.set_font("Helvetica", "B", 9)
+            for header, width in zip(headers, widths):
+                pdf.cell(width, line_height + 1, header, border=1, align="C")
+            pdf.ln()
+            pdf.set_font("Helvetica", "", 9)
+            for _, row in df.iterrows():
+                timestamp = row["timestamp"]
+                if hasattr(timestamp, "to_pydatetime"):
+                    ts_text = timestamp.strftime("%Y-%m-%d %H:%M:%S")
+                else:
+                    ts_text = str(timestamp)
+                message = str(row["message"]) if row["message"] else "-"
+                wrapped_lines = pdf.multi_cell(widths[3], line_height, message, split_only=True)
+                row_height = line_height * max(1, len(wrapped_lines))
+                y_start = pdf.get_y()
+                x_start = pdf.get_x()
+
+                pdf.cell(widths[0], row_height, ts_text, border=1)
+                pdf.cell(widths[1], row_height, str(row["number"]), border=1)
+                pdf.cell(widths[2], row_height, str(row["status"]), border=1)
+
+                x_message = pdf.get_x()
+                pdf.set_xy(x_message, y_start)
+                pdf.multi_cell(widths[3], line_height, message, border=1)
+                pdf.set_xy(pdf.l_margin, y_start + row_height)
+            pdf.output(path)
+            messagebox.showinfo("Export PDF", f"Log berhasil disimpan ke {path}")
+        except Exception as exc:  # noqa: BLE001
+            messagebox.showerror("Export PDF", f"Gagal membuat PDF: {exc}")
+
+    def _update_log_chart(self) -> None:
+        canvas = getattr(self, "canvas_log_chart", None)
+        if not canvas:
+            return
+        canvas.delete("all")
+        counts = self.db.log_status_counts()
+        categories = [
+            ("sent", "Sukses", "#27ae60"),
+            ("failed", "Gagal", "#c0392b"),
+        ]
+        values = [counts.get(key, 0) for key, _, _ in categories]
+        total = sum(values)
+        canvas.update_idletasks()
+        width = canvas.winfo_width() or 400
+        height = int(canvas["height"])
+        if total == 0:
+            canvas.create_text(width / 2, height / 2, text="Belum ada data log", font=("Arial", 11))
+            return
+        max_value = max(values)
+        margin = 30
+        available_width = width - margin * (len(categories) + 1)
+        bar_width = max(40, available_width / len(categories))
+        chart_height = height - 40
+        for idx, (key, label, color) in enumerate(categories):
+            value = counts.get(key, 0)
+            scaled = 0 if max_value == 0 else (value / max_value) * chart_height
+            x0 = margin + idx * (bar_width + margin)
+            y0 = height - 20 - scaled
+            x1 = x0 + bar_width
+            y1 = height - 20
+            canvas.create_rectangle(x0, y0, x1, y1, fill=color, width=0)
+            canvas.create_text((x0 + x1) / 2, y0 - 10, text=str(value), font=("Arial", 10, "bold"))
+            canvas.create_text((x0 + x1) / 2, height - 10, text=label, font=("Arial", 10))
     # endregion
 
     def _on_close(self) -> None:
