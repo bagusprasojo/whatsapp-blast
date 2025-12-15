@@ -39,10 +39,14 @@ class Database:
                 CREATE TABLE IF NOT EXISTS contacts (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     name TEXT NOT NULL,
-                    number TEXT NOT NULL UNIQUE
+                    number TEXT NOT NULL UNIQUE,
+                    tags TEXT DEFAULT ''
                 )
                 """
             )
+            columns = {row["name"] for row in conn.execute("PRAGMA table_info(contacts)")}
+            if "tags" not in columns:
+                conn.execute("ALTER TABLE contacts ADD COLUMN tags TEXT DEFAULT ''")
             conn.execute(
                 """
                 CREATE TABLE IF NOT EXISTS templates (
@@ -78,22 +82,30 @@ class Database:
     # Contact operations
     def list_contacts(self) -> List[Contact]:
         with self._connection() as conn:
-            rows = conn.execute("SELECT id, name, number FROM contacts ORDER BY name").fetchall()
-        return [Contact(id=row["id"], name=row["name"], number=row["number"]) for row in rows]
+            rows = conn.execute("SELECT id, name, number, tags FROM contacts ORDER BY name").fetchall()
+        return [
+            Contact(
+                id=row["id"],
+                name=row["name"],
+                number=row["number"],
+                tags=deserialize_tags(row["tags"]),
+            )
+            for row in rows
+        ]
 
-    def add_contact(self, name: str, number: str) -> int:
+    def add_contact(self, name: str, number: str, tags: Sequence[str] | None = None) -> int:
         with self._connection() as conn:
             cursor = conn.execute(
-                "INSERT INTO contacts (name, number) VALUES (?, ?)",
-                (name.strip(), normalize_number(number)),
+                "INSERT INTO contacts (name, number, tags) VALUES (?, ?, ?)",
+                (name.strip(), normalize_number(number), serialize_tags(tags or [])),
             )
             return cursor.lastrowid
 
-    def update_contact(self, contact_id: int, name: str, number: str) -> None:
+    def update_contact(self, contact_id: int, name: str, number: str, tags: Sequence[str] | None = None) -> None:
         with self._connection() as conn:
             conn.execute(
-                "UPDATE contacts SET name = ?, number = ? WHERE id = ?",
-                (name.strip(), normalize_number(number), contact_id),
+                "UPDATE contacts SET name = ?, number = ?, tags = ? WHERE id = ?",
+                (name.strip(), normalize_number(number), serialize_tags(tags or []), contact_id),
             )
 
     def delete_contact(self, contact_id: int) -> None:
@@ -105,15 +117,19 @@ class Database:
         if "number" not in df.columns:
             raise ValueError("CSV harus memiliki kolom 'number'")
         df["name"] = df.get("name", "").fillna("")
+        if "tags" not in df.columns:
+            df["tags"] = ""
+        df["tags"] = df["tags"].fillna("")
         inserted = 0
         with self._connection() as conn:
             for _, row in df.iterrows():
                 name = str(row["name"]).strip() or "No Name"
                 number = normalize_number(str(row["number"]))
+                tags = parse_tags_text(str(row.get("tags", "")))
                 try:
                     conn.execute(
-                        "INSERT OR IGNORE INTO contacts (name, number) VALUES (?, ?)",
-                        (name, number),
+                        "INSERT OR IGNORE INTO contacts (name, number, tags) VALUES (?, ?, ?)",
+                        (name, number, serialize_tags(tags)),
                     )
                     inserted += 1
                 except sqlite3.IntegrityError:
@@ -226,3 +242,23 @@ def normalize_number(number: str) -> str:
     if digits.startswith("0"):
         digits = "62" + digits[1:]
     return digits
+
+
+def parse_tags_text(raw: str) -> List[str]:
+    parts = [part.strip() for part in raw.split(",")] if raw else []
+    return [part for part in parts if part]
+
+
+def serialize_tags(tags: Sequence[str]) -> str:
+    seen = []
+    for tag in tags:
+        clean = tag.strip()
+        if clean and clean not in seen:
+            seen.append(clean)
+    return ",".join(seen)
+
+
+def deserialize_tags(raw: str | None) -> List[str]:
+    if not raw:
+        return []
+    return parse_tags_text(raw)

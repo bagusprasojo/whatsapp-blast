@@ -15,9 +15,10 @@ Panduan ini menjelaskan cara memakai fitur utama aplikasi yang telah terpasang.
 
 ## 3. Tab Kontak
 
-- Tambah kontak dengan memasukkan **Nama** dan **Nomor** lalu klik **Tambah**.
+- Tambah kontak dengan memasukkan **Nama**, **Nomor**, dan daftar **Tag** (pisahkan dengan koma) lalu klik **Tambah**.
+- Gunakan kolom pencarian teks atau combobox **Filter tag** untuk menampilkan subset kontak berdasarkan label tertentu sebelum memilih target blast.
 - Pilih baris kontak untuk mengubah atau menghapusnya.
-- Gunakan **Import CSV** (kolom `name`, `number`) untuk menambahkan kontak massal.
+- Gunakan **Import CSV** (kolom `name`, `number`, opsional `tags`) untuk menambahkan kontak massal dengan tag yang sama seperti di aplikasi.
 
 ## 4. Tab Template
 
@@ -29,7 +30,7 @@ Panduan ini menjelaskan cara memakai fitur utama aplikasi yang telah terpasang.
 ## 5. Tab Blast
 
 1. Pilih template.
-2. Pilih kontak (jika belum login hanya kontak pertama yang tersedia).
+2. Gunakan kolom pencarian / combobox **Filter tag** untuk menyaring daftar kontak (jika belum login hanya kontak pertama yang tersedia).
 3. Atur **Delay** antar pesan (>=2 detik dianjurkan).
 4. Klik **Mulai Blast** untuk mengirim, atau **Stop** untuk membatalkan.
 5. Panel status di bagian bawah menampilkan progres pengiriman.

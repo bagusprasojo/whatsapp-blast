@@ -6,7 +6,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Optional
+from typing import List, Optional
 
 
 @dataclass
@@ -14,6 +14,7 @@ class Contact:
     id: Optional[int]
     name: str
     number: str
+    tags: List[str]
 
 
 @dataclass

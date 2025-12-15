@@ -4,7 +4,8 @@ A WhatsApp Web automation tool built with Tkinter, SQLite, Selenium, Pandas, and
 
 ## Fitur
 
-- Manajemen kontak (CRUD + import CSV).
+- Manajemen kontak (CRUD + import CSV + tagging untuk pencarian/filter).
+- Filter kontak & target blast berdasarkan keyword/tag untuk segmentasi cepat.
 - Manajemen template pesan dengan syntax template Jinja2 (`{{contact.nama}}`,`{{contact.nomor}}`, `{{today|format_date("%d/%m/%Y")}}`, kondisi, dll).
 - Blast manual dengan pemilihan kontak dan delay antar pesan.
 - Scheduler (set, auto start, cancel, riwayat).
@@ -49,7 +50,7 @@ Pada run pertama, login ke WhatsApp Web di jendela Selenium. Setelah QR code dip
 
 ## Struktur Basis Data
 
-- `contacts`: daftar kontak (nama, nomor unik).
+- `contacts`: daftar kontak (nama, nomor unik, tags koma-separator).
 - `templates`: daftar template pesan.
 - `schedules`: jadwal blast mendatang.
 - `logs`: riwayat pengiriman.

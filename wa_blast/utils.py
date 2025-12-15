@@ -49,6 +49,7 @@ def build_template_context(
             "nama": contact.name,
             "number": contact.number,
             "nomor": contact.number,
+            "tags": contact.tags,
         }
     if extra:
         context.update(extra)

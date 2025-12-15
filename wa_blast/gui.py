@@ -84,23 +84,57 @@ class BlastApp(tk.Tk):
 
         ttk.Label(form, text="Nama").grid(row=0, column=0, sticky=tk.W, padx=5, pady=5)
         ttk.Label(form, text="Nomor").grid(row=1, column=0, sticky=tk.W, padx=5, pady=5)
+        ttk.Label(form, text="Tag (pisahkan dengan koma)").grid(row=2, column=0, sticky=tk.W, padx=5, pady=5)
 
         self.entry_contact_name = ttk.Entry(form, width=40)
         self.entry_contact_number = ttk.Entry(form, width=40)
+        self.entry_contact_tags = ttk.Entry(form, width=40)
         self.entry_contact_name.grid(row=0, column=1, padx=5, pady=5)
         self.entry_contact_number.grid(row=1, column=1, padx=5, pady=5)
+        self.entry_contact_tags.grid(row=2, column=1, padx=5, pady=5)
 
         btn_frame = ttk.Frame(form)
-        btn_frame.grid(row=2, column=0, columnspan=2, pady=10)
+        btn_frame.grid(row=3, column=0, columnspan=2, pady=10)
 
         ttk.Button(btn_frame, text="Tambah", command=self._add_contact).pack(side=tk.LEFT, padx=5)
         ttk.Button(btn_frame, text="Update", command=self._update_contact).pack(side=tk.LEFT, padx=5)
         ttk.Button(btn_frame, text="Hapus", command=self._delete_contact).pack(side=tk.LEFT, padx=5)
         ttk.Button(btn_frame, text="Import CSV", command=self._import_contacts).pack(side=tk.LEFT, padx=5)
 
-        self.tree_contacts = ttk.Treeview(frame, columns=("name", "number"), show="headings", selectmode="extended")
+        search_frame = ttk.LabelFrame(frame, text="Pencarian")
+        search_frame.pack(fill=tk.X, padx=10, pady=(0, 5))
+        ttk.Label(search_frame, text="Cari nama / nomor").grid(row=0, column=0, sticky=tk.W, padx=(5, 0), pady=5)
+        self.contact_search_var = tk.StringVar()
+        self.contact_search_var.trace_add("write", lambda *_: self._load_contacts())
+        entry_search = ttk.Entry(search_frame, textvariable=self.contact_search_var, width=40)
+        entry_search.grid(row=0, column=1, padx=5, pady=5, sticky=tk.W)
+
+        ttk.Label(search_frame, text="Filter tag").grid(row=0, column=2, sticky=tk.W, padx=(10, 0), pady=5)
+        self.contact_tag_filter_var = tk.StringVar(value="Semua Tag")
+        self.combo_contact_tag_filter = ttk.Combobox(
+            search_frame,
+            textvariable=self.contact_tag_filter_var,
+            state="readonly",
+            width=20,
+            values=["Semua Tag"],
+        )
+        self.combo_contact_tag_filter.grid(row=0, column=3, padx=5, pady=5, sticky=tk.W)
+        self.combo_contact_tag_filter.bind("<<ComboboxSelected>>", lambda _: self._load_contacts())
+
+        ttk.Button(search_frame, text="Reset", command=self._clear_contact_search).grid(
+            row=0, column=4, padx=5, pady=5, sticky=tk.W
+        )
+
+        self.tree_contacts = ttk.Treeview(
+            frame,
+            columns=("name", "number", "tags"),
+            show="headings",
+            selectmode="extended",
+        )
         self.tree_contacts.heading("name", text="Nama")
         self.tree_contacts.heading("number", text="Nomor")
+        self.tree_contacts.heading("tags", text="Tag")
+        self.tree_contacts.column("tags", width=200)
         self.tree_contacts.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
         self.tree_contacts.bind("<<TreeviewSelect>>", self._on_contact_select)
 
@@ -169,6 +203,28 @@ class BlastApp(tk.Tk):
         self.btn_logout = ttk.Button(status_frame, text="Logout", command=self._logout, state=tk.DISABLED)
         self.btn_logout.pack(side=tk.LEFT, padx=5)
 
+        blast_filter = ttk.LabelFrame(frame, text="Filter Kontak Blast")
+        blast_filter.pack(fill=tk.X, padx=10, pady=(0, 5))
+        ttk.Label(blast_filter, text="Cari nama / nomor").grid(row=0, column=0, padx=(5, 0), pady=5, sticky=tk.W)
+        self.blast_search_var = tk.StringVar()
+        self.blast_search_var.trace_add("write", lambda *_: self._load_contacts())
+        entry_blast_search = ttk.Entry(blast_filter, textvariable=self.blast_search_var, width=40)
+        entry_blast_search.grid(row=0, column=1, padx=5, pady=5, sticky=tk.W)
+        ttk.Label(blast_filter, text="Filter tag").grid(row=0, column=2, padx=(10, 0), pady=5, sticky=tk.W)
+        self.blast_tag_filter_var = tk.StringVar(value="Semua Tag")
+        self.combo_blast_tag_filter = ttk.Combobox(
+            blast_filter,
+            textvariable=self.blast_tag_filter_var,
+            state="readonly",
+            width=20,
+            values=["Semua Tag"],
+        )
+        self.combo_blast_tag_filter.grid(row=0, column=3, padx=5, pady=5, sticky=tk.W)
+        self.combo_blast_tag_filter.bind("<<ComboboxSelected>>", lambda _: self._load_contacts())
+        ttk.Button(blast_filter, text="Reset", command=self._clear_blast_filter).grid(
+            row=0, column=4, padx=5, pady=5, sticky=tk.W
+        )
+
         ttk.Label(frame, text="Pilih Kontak (gunakan Ctrl/Cmd untuk multi-select)").pack(anchor=tk.W, padx=10)
         self.tree_blast_contacts = ttk.Treeview(frame, columns=("name", "number"), show="headings", selectmode="extended")
         self.tree_blast_contacts.heading("name", text="Nama")
@@ -234,16 +290,59 @@ class BlastApp(tk.Tk):
         self.tree_contacts.delete(*self.tree_contacts.get_children())
         self.tree_blast_contacts.delete(*self.tree_blast_contacts.get_children())
         contacts = self.db.list_contacts()
+        contact_filter_text = ""
+        if hasattr(self, "contact_search_var"):
+            contact_filter_text = self.contact_search_var.get().strip().lower()
+        contact_tag_filter = ""
+        if hasattr(self, "contact_tag_filter_var"):
+            selected = self.contact_tag_filter_var.get()
+            if selected and selected != "Semua Tag":
+                contact_tag_filter = selected
+        blast_filter_text = ""
+        if hasattr(self, "blast_search_var"):
+            blast_filter_text = self.blast_search_var.get().strip().lower()
+        blast_tag_filter = ""
+        if hasattr(self, "blast_tag_filter_var"):
+            selected = self.blast_tag_filter_var.get()
+            if selected and selected != "Semua Tag":
+                blast_tag_filter = selected
+        all_tags = sorted({tag for contact in contacts for tag in contact.tags})
+        tag_values = ["Semua Tag"] + all_tags
+        if hasattr(self, "combo_contact_tag_filter"):
+            current = self.contact_tag_filter_var.get()
+            self.combo_contact_tag_filter["values"] = tag_values
+            if current not in tag_values:
+                self.contact_tag_filter_var.set("Semua Tag")
+        if hasattr(self, "combo_blast_tag_filter"):
+            current = self.blast_tag_filter_var.get()
+            self.combo_blast_tag_filter["values"] = tag_values
+            if current not in tag_values:
+                self.blast_tag_filter_var.set("Semua Tag")
+        display_contacts = contacts
+        if contact_filter_text:
+            display_contacts = [
+                c for c in display_contacts if contact_filter_text in c.name.lower() or contact_filter_text in c.number.lower()
+            ]
+        if contact_tag_filter:
+            display_contacts = [c for c in display_contacts if contact_tag_filter in c.tags]
         preview_labels = []
         self._preview_contact_map.clear()
-        for contact in contacts:
-            values = (contact.name, contact.number)
+        for contact in display_contacts:
+            tag_text = ", ".join(contact.tags)
+            values = (contact.name, contact.number, tag_text)
             self.tree_contacts.insert("", tk.END, iid=str(contact.id), values=values)
             label = f"{contact.name} ({contact.number})"
             preview_labels.append(label)
             self._preview_contact_map[label] = contact
         blast_contacts = contacts if self.auth_profile else contacts[:1]
-        for contact in blast_contacts:
+        blast_display = blast_contacts
+        if blast_filter_text:
+            blast_display = [
+                c for c in blast_display if blast_filter_text in c.name.lower() or blast_filter_text in c.number.lower()
+            ]
+        if blast_tag_filter:
+            blast_display = [c for c in blast_display if blast_tag_filter in c.tags]
+        for contact in blast_display:
             values = (contact.name, contact.number)
             self.tree_blast_contacts.insert("", tk.END, iid=f"blast-{contact.id}", values=values)
         if hasattr(self, "combo_preview_contact"):
@@ -265,14 +364,18 @@ class BlastApp(tk.Tk):
         self.entry_contact_name.insert(0, values[0])
         self.entry_contact_number.delete(0, tk.END)
         self.entry_contact_number.insert(0, values[1])
+        if len(values) > 2:
+            self.entry_contact_tags.delete(0, tk.END)
+            self.entry_contact_tags.insert(0, values[2])
 
     def _add_contact(self) -> None:
         name = self.entry_contact_name.get().strip()
         number = self.entry_contact_number.get().strip()
+        tags = self._parse_tags_input(self.entry_contact_tags.get())
         if not name or not number:
             messagebox.showwarning("Validasi", "Nama dan nomor wajib diisi")
             return
-        self.db.add_contact(name, number)
+        self.db.add_contact(name, number, tags)
         self._load_contacts()
 
     def _update_contact(self) -> None:
@@ -282,11 +385,12 @@ class BlastApp(tk.Tk):
             return
         name = self.entry_contact_name.get().strip()
         number = self.entry_contact_number.get().strip()
+        tags = self._parse_tags_input(self.entry_contact_tags.get())
         if not name or not number:
             messagebox.showwarning("Validasi", "Nama dan nomor wajib diisi")
             return
         contact_id = int(selected[0])
-        self.db.update_contact(contact_id, name, number)
+        self.db.update_contact(contact_id, name, number, tags)
         self._load_contacts()
 
     def _delete_contact(self) -> None:
@@ -309,6 +413,22 @@ class BlastApp(tk.Tk):
             self._load_contacts()
         except Exception as exc:  # noqa: BLE001
             messagebox.showerror("Error", str(exc))
+
+    def _clear_contact_search(self) -> None:
+        if hasattr(self, "contact_tag_filter_var"):
+            self.contact_tag_filter_var.set("Semua Tag")
+        if hasattr(self, "contact_search_var"):
+            self.contact_search_var.set("")
+
+    def _clear_blast_filter(self) -> None:
+        if hasattr(self, "blast_tag_filter_var"):
+            self.blast_tag_filter_var.set("Semua Tag")
+        if hasattr(self, "blast_search_var"):
+            self.blast_search_var.set("")
+
+    @staticmethod
+    def _parse_tags_input(raw: str) -> List[str]:
+        return [tag.strip() for tag in raw.split(",") if tag.strip()]
     # endregion
 
     # region Templates logic
@@ -389,7 +509,7 @@ class BlastApp(tk.Tk):
             return self._preview_contact_map[label]
         if self._preview_contact_map:
             return next(iter(self._preview_contact_map.values()))
-        return Contact(id=None, name="Contoh", number="+620000000")
+        return Contact(id=None, name="Contoh", number="+620000000", tags=[])
 
     def _set_preview_text(self, content: str) -> None:
         self.text_template_preview.configure(state=tk.NORMAL)
