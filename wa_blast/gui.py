@@ -149,21 +149,19 @@ class BlastApp(tk.Tk):
         controls.pack(fill=tk.X, padx=10, pady=10)
 
         ttk.Label(controls, text="Template").grid(row=0, column=0, sticky=tk.W, padx=5, pady=5)
-        self.combo_blast_template = ttk.Combobox(controls, state="readonly")
-        self.combo_blast_template.grid(row=0, column=1, padx=5, pady=5)
+        self.combo_blast_template = ttk.Combobox(controls, state="readonly", width=30)
+        self.combo_blast_template.grid(row=0, column=1, padx=5, pady=5, sticky=tk.W)
 
-        ttk.Label(controls, text="Delay (detik)").grid(row=1, column=0, sticky=tk.W, padx=5, pady=5)
+        ttk.Label(controls, text="Delay (detik)").grid(row=0, column=2, sticky=tk.W, padx=5, pady=5)
         self.spin_delay = ttk.Spinbox(controls, from_=1, to=60, width=5)
         self.spin_delay.set("2")
-        self.spin_delay.grid(row=1, column=1, padx=5, pady=5, sticky=tk.W)
+        self.spin_delay.grid(row=0, column=3, padx=5, pady=5, sticky=tk.W)
 
-        btn_frame = ttk.Frame(controls)
-        btn_frame.grid(row=2, column=0, columnspan=2, pady=10)
-        ttk.Button(btn_frame, text="Mulai Blast", command=self._start_blast).pack(side=tk.LEFT, padx=5)
-        ttk.Button(btn_frame, text="Stop", command=self._stop_blast).pack(side=tk.LEFT, padx=5)
+        ttk.Button(controls, text="Mulai Blast", command=self._start_blast).grid(row=0, column=4, padx=5, pady=5)
+        ttk.Button(controls, text="Stop", command=self._stop_blast).grid(row=0, column=5, padx=5, pady=5)
 
         status_frame = ttk.Frame(controls)
-        status_frame.grid(row=3, column=0, columnspan=2, sticky=tk.W, padx=5)
+        status_frame.grid(row=1, column=0, columnspan=6, sticky=tk.W, padx=5, pady=(5, 0))
         self.login_status_var = tk.StringVar(value="Status: Belum login")
         ttk.Label(status_frame, textvariable=self.login_status_var).pack(side=tk.LEFT)
         self.btn_login = ttk.Button(status_frame, text="Login", command=self._open_login_dialog)
@@ -412,11 +410,9 @@ class BlastApp(tk.Tk):
     def _build_about_tab(self) -> None:
         frame = self.tab_about
         about_text = (
-            "WhatsApp Blast Desktop\n\n"
-            "- Otomasi WhatsApp Web berbasis Selenium\n"
-            "- Manajemen kontak, template Jinja2, scheduler, dan logging\n"
-            "- Ekspor log ke CSV/PDF + grafik ringkasan\n"
-            "- Dapat dibuild ke EXE menggunakan PyInstaller\n"
+            "WhatsApp Blast Desktop 1.0\n\n"
+            "- Use it wisely\n"
+            "- Use it with your own risks\n"            
         )
         label = tk.Label(frame, text=about_text, justify=tk.LEFT, anchor="nw")
         label.pack(fill=tk.BOTH, expand=True, padx=20, pady=20)
@@ -437,7 +433,16 @@ class BlastApp(tk.Tk):
             return
         dialog = tk.Toplevel(self)
         dialog.title("Login Pengguna")
-        dialog.geometry("320x180")
+        width, height = 320, 180
+        dialog.geometry(f"{width}x{height}")
+        self.update_idletasks()
+        root_x = self.winfo_rootx()
+        root_y = self.winfo_rooty()
+        root_w = self.winfo_width()
+        root_h = self.winfo_height()
+        pos_x = root_x + max((root_w - width) // 2, 0)
+        pos_y = root_y + max((root_h - height) // 2, 0)
+        dialog.geometry(f"{width}x{height}+{pos_x}+{pos_y}")
         dialog.transient(self)
         dialog.grab_set()
 
